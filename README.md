@@ -146,6 +146,12 @@ electron/
 
 ---
 
+## Disclaimer | Застереження
+
+**EN:** This project is created for **educational and research purposes only**. It demonstrates Electron app architecture, API integration patterns, and browser automation techniques. The authors are not responsible for any misuse.
+
+**UA:** Цей проєкт створено **виключно в освітніх та дослідницьких цілях**. Він демонструє архітектуру Electron додатків, патерни інтеграції з API та техніки браузерної автоматизації. Автори не несуть відповідальності за будь-яке неправомірне використання.
+
 ## License
 
-Private. For authorized use only.
+MIT
