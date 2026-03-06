@@ -2,6 +2,11 @@
   "name": "e-consul-monitor",
   "version": "1.0.0",
   "description": "e-Consul slot monitor desktop app",
+  "author": "Lazysoft <info@lazysoft.pl>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ChuprinaDaria/e-consul-monitor"
+  },
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
