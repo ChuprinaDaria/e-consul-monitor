@@ -5,6 +5,7 @@ const { ConfigStore } = require('./src/lib/configStore')
 const { TelegramNotifier } = require('./src/lib/telegramNotifier')
 const { SlotMonitor } = require('./src/lib/slotMonitor')
 const { BookingEngine } = require('./src/lib/bookingEngine')
+const { BookingService } = require('./src/lib/bookingService')
 let mainWindow
 let configStore
 let monitor = null
@@ -194,6 +195,13 @@ ipcMain.handle('monitor:start', async () => {
   // Step 2: Start monitoring — API calls go through the auth browser window
   // This bypasses Cloudflare WAF (real browser TLS fingerprint)
   const wc = authEngine?.win?.webContents || null
+  const bookingService = new BookingService({
+    api: new (require('./src/lib/eQueueApi').EQueueApi)(wc),
+    onLog: (msg) => sendToRenderer('monitor:log', msg),
+  })
+
+  let isBooking = false
+
   monitor = new SlotMonitor({
     webContents: wc,
     onLog: (msg) => sendToRenderer('monitor:log', msg),
@@ -207,6 +215,38 @@ ipcMain.handle('monitor:start', async () => {
       const text = `<b>Нові слоти!</b>\n${lines.join('\n')}${slots.length > 10 ? '\n...' : ''}\n\nВсього: ${slots.length}`
       await telegram.sendMessage(text)
       sendToRenderer('monitor:log', `Sent ${slots.length} slots to Telegram`)
+    },
+    onBookingRequest: async (slot, timeZone) => {
+      if (isBooking) {
+        sendToRenderer('monitor:log', 'Already booking — skip')
+        return
+      }
+      isBooking = true
+      sendToRenderer('monitor:status', 'booking')
+      sendToRenderer('monitor:log', `Booking: ${slot.institutionName} ${slot.date} ${slot.timeFrom}...`)
+
+      await telegram.sendMessage(
+        `<b>Бронюю слот!</b>\n${slot.institutionName}\n${slot.date} ${slot.timeFrom}-${slot.timeTo}`
+      )
+
+      const result = await bookingService.book(config, slot, timeZone, [slot.consulIpnHash])
+
+      if (result.success) {
+        sendToRenderer('monitor:status', 'booked')
+        sendToRenderer('monitor:log', `BOOKED! regNumber: ${result.regNumber}`)
+        await telegram.sendMessage(
+          `<b>ЗАБРОНЬОВАНО!</b>\n${slot.institutionName}\n${slot.date} ${slot.timeFrom}-${slot.timeTo}\nРеєстраційний номер: ${result.regNumber || 'pending'}`
+        )
+        // Stop monitoring after successful booking
+        if (monitor) monitor.stop()
+      } else {
+        sendToRenderer('monitor:log', `Booking failed: ${result.error}`)
+        await telegram.sendMessage(
+          `<b>Не вдалось забронювати</b>\n${slot.date} ${slot.timeFrom}\n${result.error}`
+        )
+        sendToRenderer('monitor:status', 'monitoring')
+      }
+      isBooking = false
     },
   })
 

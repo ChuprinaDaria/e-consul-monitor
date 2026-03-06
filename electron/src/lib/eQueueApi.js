@@ -115,6 +115,76 @@ class EQueueApi {
     return data.reservedSlots || data
   }
 
+  // --- Document REST API (for booking) ---
+
+  async createDocument() {
+    return this._rest('POST', '/documents', {})
+  }
+
+  async updateDocument(docId, properties, lastLogId) {
+    const qs = lastLogId ? `?last_update_log_id=${lastLogId}` : ''
+    return this._rest('PUT', `/documents/${docId}${qs}`, { properties })
+  }
+
+  async externalReaderCheck(docId, service, method, path) {
+    return this._rest('POST', `/documents/${docId}/external-reader/check`, {
+      service, method, path,
+    })
+  }
+
+  async prepareDocument(docId) {
+    return this._rest('POST', `/documents/${docId}/prepare`, {})
+  }
+
+  async validateDocument(docId, commit = true) {
+    return this._rest('POST', `/documents/${docId}/validate?commit=${commit}`, {})
+  }
+
+  async getTaskLast(taskId) {
+    return this._rest('GET', `/tasks/${taskId}/last`)
+  }
+
+  async _rest(httpMethod, path, body) {
+    if (!this._wc) {
+      throw new Error('No webContents — cannot make API request without authenticated browser')
+    }
+
+    const bodyStr = body !== undefined ? JSON.stringify(body) : 'undefined'
+
+    const result = await this._wc.executeJavaScript(`
+      (async function() {
+        try {
+          const token = localStorage.getItem('token') || '';
+          const opts = {
+            method: '${httpMethod}',
+            headers: {
+              'Content-Type': 'application/json',
+              'token': token
+            }
+          };
+          ${httpMethod !== 'GET' ? `opts.body = ${JSON.stringify(bodyStr)};` : ''}
+          const res = await fetch('https://my.e-consul.gov.ua${path}', opts);
+          const json = await res.json();
+          return { ok: true, data: json, status: res.status };
+        } catch (err) {
+          return { ok: false, error: err.message };
+        }
+      })()
+    `)
+
+    if (!result.ok) {
+      throw new Error(`REST API error ${httpMethod} ${path}: ${result.error}`)
+    }
+
+    if (result.status === 401) {
+      const err = new Error(`Auth expired (401) on ${httpMethod} ${path}`)
+      err.status = 401
+      throw err
+    }
+
+    return result.data
+  }
+
   async _request(service, method, filters) {
     if (!this._wc) {
       throw new Error('No webContents — cannot make API request without authenticated browser')

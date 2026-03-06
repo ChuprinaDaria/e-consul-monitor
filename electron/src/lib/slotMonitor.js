@@ -4,11 +4,12 @@ const { calculateFreeSlots } = require('./slotCalculator')
 const BATCH_SIZE = 20
 
 class SlotMonitor {
-  constructor({ webContents, onLog, onStatus, onSlotsFound, onAuthExpired }) {
+  constructor({ webContents, onLog, onStatus, onSlotsFound, onBookingRequest, onAuthExpired }) {
     this.api = new EQueueApi(webContents)
     this.onLog = onLog || (() => {})
     this.onStatus = onStatus || (() => {})
     this.onSlotsFound = onSlotsFound || (() => {})
+    this.onBookingRequest = onBookingRequest || (() => {})
     this.onAuthExpired = onAuthExpired || (() => {})
     this._timer = null
     this._previousSlotKeys = new Set()
@@ -178,6 +179,17 @@ class SlotMonitor {
         this.onLog(`NEW slots detected: ${newSlots.length}`)
         this.onStatus('found')
         this.onSlotsFound(newSlots)
+
+        // Auto-booking mode
+        const mode = this._config.monitoring?.mode
+        if (mode === 'book') {
+          const bookableSlot = this._findBookableSlot(newSlots)
+          if (bookableSlot) {
+            const meta = this._institutionMeta.get(bookableSlot.institutionCode) || {}
+            this.onLog(`AUTO-BOOK: ${bookableSlot.institutionName} ${bookableSlot.date} ${bookableSlot.timeFrom}`)
+            this.onBookingRequest(bookableSlot, meta.timeZone)
+          }
+        }
       }
 
       this._previousSlotKeys = currentKeys
@@ -230,6 +242,32 @@ class SlotMonitor {
       institutionCode,
       institutionName,
     }))
+  }
+
+  _findBookableSlot(slots) {
+    const timeFrom = this._config.monitoring?.bookingTimeFrom
+    const timeTo = this._config.monitoring?.bookingTimeTo
+
+    if (!timeFrom || !timeTo) {
+      this.onLog('Booking mode active but no time interval set — skipping auto-book')
+      return null
+    }
+
+    // Filter slots within the desired time interval
+    const matching = slots.filter(s => s.timeFrom >= timeFrom && s.timeFrom < timeTo)
+
+    if (matching.length === 0) {
+      this.onLog(`No slots in booking interval ${timeFrom}-${timeTo}`)
+      return null
+    }
+
+    // Pick the earliest slot
+    matching.sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date)
+      return a.timeFrom.localeCompare(b.timeFrom)
+    })
+
+    return matching[0]
   }
 
   _scheduleNext() {
