@@ -1,0 +1,35 @@
+appId: com.lazysoft.econsul-monitor
+productName: e-Consul Monitor
+copyright: Copyright © 2026 Lazysoft
+
+directories:
+  buildResources: assets
+  output: release
+
+files:
+  - dist/**
+  - dist-electron/**
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.utilities
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Utility
+
+nsis:
+  oneClick: true
+  allowToChangeInstallationDirectory: false
+
+dmg:
+  title: e-Consul Monitor
