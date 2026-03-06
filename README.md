@@ -149,7 +149,3 @@ electron/
 ## License
 
 Private. For authorized use only.
-
----
-
-*Built by [Lazysoft](https://lazysoft.pl) — Wrocław, Poland*
