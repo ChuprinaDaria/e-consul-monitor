@@ -43,6 +43,8 @@ class EQueueApi {
         nameUkr: d.institutionNameUkr,
         nameEng: d.institutionNameEng,
         city: d.city || d.institutionCity,
+        timeZone: d.timeZone,
+        numberWeeks: d.numberWeeks,
       }
     })
   }

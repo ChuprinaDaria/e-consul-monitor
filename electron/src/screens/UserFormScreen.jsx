@@ -15,6 +15,8 @@ export default function UserFormScreen({ config, onSave }) {
     serviceCode: config.consulate.serviceCode || '',
     monitorAll: config.consulate.monitorAll || false,
     minDate: config.monitoring.minDate || '',
+    bookingTimeFrom: config.monitoring.bookingTimeFrom || '',
+    bookingTimeTo: config.monitoring.bookingTimeTo || '',
   })
   const [saved, setSaved] = useState(false)
 
@@ -48,6 +50,8 @@ export default function UserFormScreen({ config, onSave }) {
       monitoring: {
         ...config.monitoring,
         minDate: form.minDate,
+        bookingTimeFrom: form.bookingTimeFrom,
+        bookingTimeTo: form.bookingTimeTo,
       },
     })
     setSaved(true)
@@ -154,6 +158,25 @@ export default function UserFormScreen({ config, onSave }) {
       <div>
         <label className={labelCls}>Мінімальна дата</label>
         <input className={inputCls} type="date" value={form.minDate} onChange={e => set('minDate', e.target.value)} />
+      </div>
+
+      <div>
+        <label className={labelCls}>Бажаний інтервал часу (для бронювання)</label>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs text-gray-500">Від</label>
+            <input className={inputCls} type="time" value={form.bookingTimeFrom}
+              onChange={e => set('bookingTimeFrom', e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500">До</label>
+            <input className={inputCls} type="time" value={form.bookingTimeTo}
+              onChange={e => set('bookingTimeTo', e.target.value)} />
+          </div>
+        </div>
+        <p className="text-xs text-gray-500 mt-1">
+          В режимі "Бронювати" — бронюватиме тільки слоти в цьому інтервалі
+        </p>
       </div>
 
       <div className="flex items-center gap-3">

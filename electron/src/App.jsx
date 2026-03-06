@@ -38,7 +38,7 @@ export default function App() {
         ))}
       </div>
       <div className="flex-1 overflow-y-auto">
-        {tab === 'monitor' && <MainScreen config={config} />}
+        {tab === 'monitor' && <MainScreen config={config} onSave={saveConfig} />}
         {tab === 'user' && <UserFormScreen config={config} onSave={saveConfig} />}
         {tab === 'settings' && <SettingsScreen config={config} onSave={saveConfig} />}
       </div>

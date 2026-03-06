@@ -82,9 +82,12 @@ ipcMain.handle('users:delete', (_evt, alias) => {
 })
 
 // --- re-auth on 401 ---
-async function reauth(config, authMethod) {
+const REAUTH_MAX_RETRIES = 3
+const REAUTH_RETRY_DELAY_MS = 30000
+
+async function reauth(config, authMethod, attempt = 1) {
   sendToRenderer('monitor:status', 'waiting-auth')
-  sendToRenderer('monitor:log', 'Token expired — re-authenticating...')
+  sendToRenderer('monitor:log', `Token expired — re-auth attempt ${attempt}/${REAUTH_MAX_RETRIES}...`)
 
   // Close old auth window
   if (authEngine) {
@@ -100,17 +103,34 @@ async function reauth(config, authMethod) {
   const authResult = await authEngine.startAuth(authMethod)
   if (!authResult) {
     sendToRenderer('monitor:log', 'Re-auth failed — could not get bank page')
+    if (attempt < REAUTH_MAX_RETRIES) {
+      sendToRenderer('monitor:log', `Retry in ${REAUTH_RETRY_DELAY_MS / 1000}s...`)
+      setTimeout(() => reauth(config, authMethod, attempt + 1), REAUTH_RETRY_DELAY_MS)
+    } else {
+      sendToRenderer('monitor:log', 'All re-auth attempts failed — monitoring paused')
+      sendToRenderer('monitor:status', 'stopped')
+    }
     return
   }
 
+  // Send new auth link to Telegram (no error messages, just the link)
   await telegram.sendMessage(
-    `<b>Сесія закінчилась — авторизуйся знову</b>\n\nВідкрий лінк у додатку банку:\n${authResult.qrLink}`
+    `<b>Токен протух — авторизуйся знову</b>\n\nВідкрий лінк у додатку банку:\n${authResult.qrLink}`
   )
   sendToRenderer('monitor:log', 'Re-auth link sent to Telegram — waiting...')
 
   const authOk = await authEngine.waitForAuthComplete(120000)
   if (!authOk) {
-    sendToRenderer('monitor:log', 'Re-auth timeout — monitoring paused')
+    sendToRenderer('monitor:log', 'Re-auth timeout')
+    if (attempt < REAUTH_MAX_RETRIES) {
+      // Resend link on next attempt
+      sendToRenderer('monitor:log', `Retry in ${REAUTH_RETRY_DELAY_MS / 1000}s...`)
+      setTimeout(() => reauth(config, authMethod, attempt + 1), REAUTH_RETRY_DELAY_MS)
+    } else {
+      await telegram.sendMessage('<b>Не вдалось переавторизуватись — моніторинг зупинено</b>')
+      sendToRenderer('monitor:log', 'All re-auth attempts failed — monitoring paused')
+      sendToRenderer('monitor:status', 'stopped')
+    }
     return
   }
 

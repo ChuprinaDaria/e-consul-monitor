@@ -1,11 +1,24 @@
+/**
+ * Розрахунок вільних слотів — верифікований алгоритм.
+ *
+ * Ключові нюанси:
+ * - NWT не фільтрується по consulIpnHash (hash завжди null, записи вкладені в consul)
+ * - Reserved + NWT мержаться в один масив blocking інтервалів
+ * - Overlap check для blocking (не exact match)
+ * - Timezone з institutions API
+ * - numberWeeks з institutions API (горизонт планування)
+ * - Гранична умова: slotMinutes + serviceTime <= rangeEndMinutes
+ */
+
 function calculateFreeSlots({
   schedules,
   reservedSlots,
   serviceCode,
-  serviceName,
   slotIntervalMinutes = 10,
   holidays = [],
   minDate,
+  timeZone,
+  numberWeeks = 25,
 }) {
   const now = new Date()
   const tomorrow = new Date(now)
@@ -15,97 +28,100 @@ function calculateFreeSlots({
   const minDateObj = minDate ? new Date(minDate) : tomorrow
   const effectiveMin = minDateObj > tomorrow ? minDateObj : tomorrow
 
-  // Unwrap .data if API returns wrapped objects
+  const endDate = new Date(now)
+  endDate.setDate(endDate.getDate() + numberWeeks * 7)
+
   const unwrap = (item) => item.data || item
 
-  // Filter consuls who provide the requested service (by code, fallback to name)
-  const relevantConsuls = schedules.map(unwrap).filter(consul =>
-    consul.consularInstitutionService?.some(s =>
-      serviceCode
-        ? s.code === serviceCode
-        : (s.name === serviceName || s.serviceName === serviceName)
-    )
-  )
+  // Parse timezone offset string like "GMT-07:00" → "-07:00"
+  const tzOffset = parseTimezoneOffset(timeZone)
 
+  // Filter consuls who provide the requested service
+  const relevantConsuls = schedules.map(unwrap).filter(consul =>
+    consul.consularInstitutionService?.some(s => s.code === serviceCode)
+  )
   if (relevantConsuls.length === 0) return []
 
-  // Holiday set for fast lookup (YYYY-MM-DD)
-  // API returns { date: "DD.MM.YYYY" } objects
+  // Holiday set (YYYY-MM-DD)
   const holidaySet = new Set(holidays.map(h => {
-    const raw = typeof h === 'string' ? h : h.date
+    const raw = typeof h === 'string' ? h : (h.data?.date || h.date)
+    if (!raw) return ''
     if (raw.includes('.')) {
       const [d, m, y] = raw.split('.')
       return `${y}-${m}-${d}`
     }
-    return raw // already YYYY-MM-DD
-  }))
+    return raw
+  }).filter(Boolean))
 
-  // Build reserved lookup: consulHash -> Set of "YYYY-MM-DD HH:MM"
-  const reservedMap = new Map()
+  // Reserved slots: group by consulIpnHash → array of {from, to} ms
+  const reservedByConsul = new Map()
   for (const rawSlot of reservedSlots) {
     const slot = unwrap(rawSlot)
-    const key = slot.consulIpnHash
-    if (!reservedMap.has(key)) reservedMap.set(key, new Set())
-    const from = new Date(slot.receptionDateAndTimeFrom)
-    reservedMap.get(key).add(formatSlotKey(from))
+    const hash = slot.consulIpnHash
+    if (!reservedByConsul.has(hash)) reservedByConsul.set(hash, [])
+    reservedByConsul.get(hash).push({
+      from: new Date(slot.receptionDateAndTimeFrom).getTime(),
+      to: new Date(slot.receptionDateAndTimeTo).getTime(),
+    })
   }
 
-  // Build nonWorking lookup per consul: Map<hash, Array<{from: Date, to: Date}>>
-  // NW blocks are 5-min chunks, slots are 10-min — need overlap check
-  const nonWorkingMap = new Map()
-  for (const consul of relevantConsuls) {
-    const blocks = []
-    for (const nw of (consul.nonWorkingTime || [])) {
-      blocks.push({
-        from: new Date(nw.notWorkingDateAndHoursFrom),
-        to: new Date(nw.notWorkingDateAndHoursTo),
-      })
-    }
-    nonWorkingMap.set(consul.consulIpnHash, blocks)
-  }
-
-  // Generate all possible slots for next 90 days
   const freeSlots = []
-  const endDate = new Date(effectiveMin)
-  endDate.setDate(endDate.getDate() + 90)
 
-  for (let d = new Date(effectiveMin); d <= endDate; d.setDate(d.getDate() + 1)) {
-    const dateStr = formatDate(d)
-    if (holidaySet.has(dateStr)) continue
+  for (const consul of relevantConsuls) {
+    const consulHash = consul.consulIpnHash
 
-    const dayOfWeek = d.getDay()
+    // Build work schedule: dayOfWeek → [{from: "09:00", to: "12:30"}, ...]
+    const workSchedule = buildWorkSchedule(consul.receptionCitizensTime)
 
-    for (const consul of relevantConsuls) {
-      const workingHours = getWorkingHoursForDay(consul.receptionCitizensTime, dayOfWeek)
-      if (!workingHours) continue
+    // Merge ALL blocking intervals: NWT + reserved for this consul
+    const nwtBlocks = (consul.nonWorkingTime || []).map(n => ({
+      from: new Date(n.notWorkingDateAndHoursFrom).getTime(),
+      to: new Date(n.notWorkingDateAndHoursTo).getTime(),
+    }))
+    const reservedBlocks = reservedByConsul.get(consulHash) || []
+    const allBlocking = [...nwtBlocks, ...reservedBlocks]
 
-      const consulHash = consul.consulIpnHash
-      const reserved = reservedMap.get(consulHash) || new Set()
-      const nwBlocks = nonWorkingMap.get(consulHash) || []
+    // Generate slots for each day
+    for (let d = new Date(effectiveMin); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const dateStr = formatDate(d)
+      if (holidaySet.has(dateStr)) continue
 
-      for (const { from, to } of workingHours) {
-        let slotStart = parseTime(dateStr, from)
-        const slotEnd = parseTime(dateStr, to)
+      const dayOfWeek = d.getDay()
+      const ranges = workSchedule.get(dayOfWeek)
+      if (!ranges) continue
 
-        while (slotStart < slotEnd) {
-          const slotTo = new Date(slotStart.getTime() + slotIntervalMinutes * 60000)
-          const slotKey = formatSlotKey(slotStart)
+      for (const { from, to } of ranges) {
+        const rangeStartMinutes = timeToMinutes(from)
+        const rangeEndMinutes = timeToMinutes(to)
+        let slotMinutes = rangeStartMinutes
 
-          // Overlap check: slot [slotStart, slotTo) intersects NW [nw.from, nw.to)
-          const isNonWorking = nwBlocks.some(nw =>
-            slotStart < nw.to && slotTo > nw.from
-          )
+        while (slotMinutes + slotIntervalMinutes <= rangeEndMinutes) {
+          const slotFromTime = minutesToTime(slotMinutes)
+          const slotToTime = minutesToTime(slotMinutes + slotIntervalMinutes)
 
-          if (!reserved.has(slotKey) && !isNonWorking) {
+          // Build ISO timestamps with timezone
+          const sfMs = new Date(`${dateStr}T${slotFromTime}:00.000${tzOffset}`).getTime()
+          const stMs = new Date(`${dateStr}T${slotToTime}:00.000${tzOffset}`).getTime()
+
+          // Overlap check: slot [sfMs, stMs) intersects block [from, to)?
+          let isBlocked = false
+          for (const block of allBlocking) {
+            if (stMs > block.from && sfMs < block.to) {
+              isBlocked = true
+              break
+            }
+          }
+
+          if (!isBlocked) {
             freeSlots.push({
               date: dateStr,
-              timeFrom: formatTime(slotStart),
-              timeTo: formatTime(slotTo),
+              timeFrom: slotFromTime,
+              timeTo: slotToTime,
               consulIpnHash: consulHash,
             })
           }
 
-          slotStart = slotTo
+          slotMinutes += slotIntervalMinutes
         }
       }
     }
@@ -114,34 +130,41 @@ function calculateFreeSlots({
   return freeSlots
 }
 
-function getWorkingHoursForDay(receptionCitizensTime, dayOfWeek) {
-  if (!receptionCitizensTime) return null
-  const scheduleDay = dayOfWeek === 0 ? 7 : dayOfWeek
-  const entries = receptionCitizensTime.filter(e => e.dayOfWeek === scheduleDay)
-  if (entries.length === 0) return null
-  return entries.map(e => ({
-    from: e.workingHoursFrom,
-    to: e.workingHoursTo,
-  }))
+function buildWorkSchedule(receptionCitizensTime) {
+  if (!receptionCitizensTime) return new Map()
+  const schedule = new Map()
+  for (const entry of receptionCitizensTime) {
+    // dayOfWeek in API: 1=Mon...7=Sun, JS Date.getDay(): 0=Sun,1=Mon...6=Sat
+    const jsDow = entry.dayOfWeek === 7 ? 0 : entry.dayOfWeek
+    if (!schedule.has(jsDow)) schedule.set(jsDow, [])
+    schedule.get(jsDow).push({
+      from: entry.workingHoursFrom,
+      to: entry.workingHoursTo,
+    })
+  }
+  return schedule
+}
+
+function parseTimezoneOffset(tz) {
+  // "GMT-07:00" → "-07:00", "GMT+02:00" → "+02:00"
+  if (!tz) return '+00:00'
+  const match = tz.match(/([+-]\d{2}:\d{2})/)
+  return match ? match[1] : '+00:00'
+}
+
+function timeToMinutes(timeStr) {
+  const [h, m] = timeStr.split(':').map(Number)
+  return h * 60 + m
+}
+
+function minutesToTime(minutes) {
+  const h = String(Math.floor(minutes / 60)).padStart(2, '0')
+  const m = String(minutes % 60).padStart(2, '0')
+  return `${h}:${m}`
 }
 
 function formatDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-function formatTime(d) {
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
-
-function formatSlotKey(d) {
-  return `${formatDate(d)} ${formatTime(d)}`
-}
-
-function parseTime(dateStr, timeStr) {
-  const [h, m] = timeStr.split(':').map(Number)
-  const d = new Date(dateStr)
-  d.setHours(h, m, 0, 0)
-  return d
 }
 
 module.exports = { calculateFreeSlots }

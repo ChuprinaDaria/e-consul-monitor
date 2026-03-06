@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react'
 import LogPanel from '../components/LogPanel.jsx'
 import StatusBadge from '../components/StatusBadge.jsx'
 
-export default function MainScreen({ config }) {
+export default function MainScreen({ config, onSave }) {
   const [status, setStatus] = useState('stopped')
   const [logs, setLogs] = useState([])
+  const mode = config.monitoring?.mode || 'search'
 
   useEffect(() => {
     if (window.electronAPI.onMonitorStatus) {
@@ -21,8 +22,6 @@ export default function MainScreen({ config }) {
     if (window.electronAPI.startMonitor) {
       window.electronAPI.startMonitor()
       setLogs([])
-    } else {
-      setLogs(['Monitor not yet implemented — coming in Task 6'])
     }
   }
 
@@ -32,9 +31,23 @@ export default function MainScreen({ config }) {
     }
   }
 
+  async function switchMode(newMode) {
+    await onSave({
+      ...config,
+      monitoring: { ...config.monitoring, mode: newMode },
+    })
+  }
+
   const hasConsulate = config.consulate.institution || config.consulate.monitorAll
   const isConfigured = hasConsulate && config.consulate.service
     && config.telegram.botToken && config.telegram.recipient
+
+  const modeBtnCls = (m) =>
+    `px-4 py-1.5 text-sm font-medium rounded-full transition-colors ${
+      mode === m
+        ? 'bg-blue-600 text-white'
+        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+    }`
 
   return (
     <div className="flex flex-col h-full p-4 gap-4">
@@ -57,6 +70,29 @@ export default function MainScreen({ config }) {
           )}
         </div>
       </div>
+
+      {/* Mode switcher */}
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-gray-500 mr-1">Режим:</span>
+        <button onClick={() => switchMode('search')} className={modeBtnCls('search')}>
+          Шукати
+        </button>
+        <button onClick={() => switchMode('book')} className={modeBtnCls('book')}>
+          Бронювати
+        </button>
+      </div>
+
+      {mode === 'book' && (
+        <div className="bg-amber-50 border border-amber-200 rounded p-3 text-sm space-y-1">
+          <p className="font-medium text-amber-800">Режим бронювання</p>
+          <p className="text-amber-700">
+            При знаходженні слоту в заданому інтервалі — автоматичне бронювання.
+            {config.monitoring.bookingTimeFrom && config.monitoring.bookingTimeTo
+              ? ` Інтервал: ${config.monitoring.bookingTimeFrom} — ${config.monitoring.bookingTimeTo}`
+              : ' Інтервал не задано — вкажи у вкладці "Користувач"'}
+          </p>
+        </div>
+      )}
 
       {!isConfigured && (
         <p className="text-sm text-amber-600">

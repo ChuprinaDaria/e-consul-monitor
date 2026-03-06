@@ -17,6 +17,7 @@ class SlotMonitor {
     this._institutionCodes = null // cached list for "all" mode
     this._holidays = []
     this._slotIntervalMap = new Map() // institutionCode → serviceTime in minutes
+    this._institutionMeta = new Map() // institutionCode → { timeZone, numberWeeks }
   }
 
   start(config) {
@@ -27,6 +28,7 @@ class SlotMonitor {
     this._institutionCodes = null
     this._holidays = []
     this._slotIntervalMap = new Map()
+    this._institutionMeta = new Map()
     this.onStatus('monitoring')
     this.onLog('Monitoring started')
     this._loadReferenceData(config).then(() => this._poll())
@@ -76,28 +78,43 @@ class SlotMonitor {
       this.onLog(`Failed to load reference data: ${err.message} — using defaults`)
     }
 
-    // If no institution codes available — resolve them via API
-    const hasStaticCodes = config.consulate.institutionCodes?.length > 0 || config.consulate.institutionCode
-    if (!hasStaticCodes && config.consulate.country) {
-      await this._resolveInstitutionCodes(config.consulate.country)
+    // Resolve institution metadata (timeZone, numberWeeks) and missing codes via API
+    if (config.consulate.country) {
+      await this._resolveInstitutionData(config)
     }
   }
 
-  async _resolveInstitutionCodes(countryName) {
+  async _resolveInstitutionData(config) {
     try {
-      this.onLog(`Resolving consulates for "${countryName}" via API...`)
+      this.onLog(`Loading institution data for "${config.consulate.country}"...`)
       const countries = await this.api.getCountries()
-      const country = countries.find(c => c.nameShort === countryName)
+      const country = countries.find(c => c.nameShort === config.consulate.country)
       if (!country) {
-        this.onLog(`Country "${countryName}" not found in API response`)
+        this.onLog(`Country "${config.consulate.country}" not found in API`)
         return
       }
 
       const institutions = await this.api.getInstitutions(country.code)
-      this._institutionCodes = institutions.map(i => i.unitId).filter(Boolean)
-      this.onLog(`Found ${this._institutionCodes.length} consulates in ${countryName}: ${institutions.map(i => i.nameUkr).join(', ')}`)
+
+      // Save metadata (timeZone, numberWeeks) per institution
+      for (const inst of institutions) {
+        if (inst.unitId) {
+          this._institutionMeta.set(inst.unitId, {
+            timeZone: inst.timeZone,
+            numberWeeks: inst.numberWeeks,
+          })
+        }
+      }
+      this.onLog(`Loaded metadata for ${this._institutionMeta.size} consulates (tz, weeks)`)
+
+      // If no static codes — use resolved ones
+      const hasStaticCodes = config.consulate.institutionCodes?.length > 0 || config.consulate.institutionCode
+      if (!hasStaticCodes) {
+        this._institutionCodes = institutions.map(i => i.unitId).filter(Boolean)
+        this.onLog(`Resolved ${this._institutionCodes.length} consulates: ${institutions.map(i => i.nameUkr).join(', ')}`)
+      }
     } catch (err) {
-      this.onLog(`Failed to resolve consulates: ${err.message}`)
+      this.onLog(`Failed to load institution data: ${err.message}`)
     }
   }
 
@@ -107,7 +124,6 @@ class SlotMonitor {
     try {
       const { consulate, monitoring } = this._config
       const serviceCode = consulate.serviceCode
-      const serviceName = consulate.service
 
       // Determine which institution codes to monitor
       let codes = []
@@ -135,7 +151,7 @@ class SlotMonitor {
         }
 
         const results = await Promise.allSettled(
-          batch.map(code => this._fetchConsulateSlots(code, serviceCode, serviceName))
+          batch.map(code => this._fetchConsulateSlots(code, serviceCode))
         )
 
         for (const result of results) {
@@ -179,7 +195,7 @@ class SlotMonitor {
     this._scheduleNext()
   }
 
-  async _fetchConsulateSlots(institutionCode, serviceCode, serviceName) {
+  async _fetchConsulateSlots(institutionCode, serviceCode) {
     const schedules = await this.api.getConsulSchedules(institutionCode)
     if (!Array.isArray(schedules) || schedules.length === 0) return []
 
@@ -195,15 +211,17 @@ class SlotMonitor {
     const reserved = await this.api.getReservedSlots(institutionCode, consulHashes)
 
     const slotIntervalMinutes = this._slotIntervalMap.get(institutionCode) || 10
+    const meta = this._institutionMeta.get(institutionCode) || {}
 
     const freeSlots = calculateFreeSlots({
       schedules: matching,
       reservedSlots: reserved,
       serviceCode,
-      serviceName,
       slotIntervalMinutes,
       holidays: this._holidays,
       minDate: this._config.monitoring?.minDate,
+      timeZone: meta.timeZone,
+      numberWeeks: meta.numberWeeks || 25,
     })
 
     // Tag each slot with institution info

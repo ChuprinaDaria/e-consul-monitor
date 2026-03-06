@@ -21,7 +21,7 @@ class ConfigStore {
         consulate: { country: '', institution: '', institutionCode: '', service: '', serviceCode: '' },
         auth: { method: 'monobank' },
         telegram: { botToken: '', recipient: '' },
-        monitoring: { pollIntervalMs: 3000, minDate: '' },
+        monitoring: { pollIntervalMs: 3000, minDate: '', mode: 'search', bookingTimeFrom: '', bookingTimeTo: '' },
       }
     }
     return this._data
