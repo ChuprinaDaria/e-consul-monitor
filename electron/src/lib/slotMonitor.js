@@ -13,6 +13,7 @@ class SlotMonitor {
     this.onAuthExpired = onAuthExpired || (() => {})
     this._timer = null
     this._previousSlotKeys = new Set()
+    this._notifiedSlotKeys = new Set() // накопичувальний — слот надсилається в ТГ лише раз
     this._running = false
     this._reauthing = false
     this._institutionCodes = null // cached list for "all" mode
@@ -26,6 +27,7 @@ class SlotMonitor {
     this._running = true
     this._config = config
     this._previousSlotKeys = new Set()
+    this._notifiedSlotKeys = new Set()
     this._institutionCodes = null
     this._holidays = []
     this._slotIntervalMap = new Map()
@@ -166,24 +168,32 @@ class SlotMonitor {
 
       this.onLog(`Total free slots across ${codes.length} consulate(s): ${allFreeSlots.length}`)
 
-      // Detect NEW slots
-      const currentKeys = new Set(allFreeSlots.map(s =>
-        `${s.institutionCode} ${s.date} ${s.timeFrom} ${s.consulIpnHash}`
-      ))
-      const newSlots = allFreeSlots.filter(s => {
-        const key = `${s.institutionCode} ${s.date} ${s.timeFrom} ${s.consulIpnHash}`
-        return !this._previousSlotKeys.has(key)
-      })
+      // Detect slots never notified before (accumulative — no duplicates from "flickering")
+      const slotKey = (s) => `${s.institutionCode} ${s.date} ${s.timeFrom} ${s.consulIpnHash}`
+      const currentKeys = new Set(allFreeSlots.map(slotKey))
+      const neverNotified = allFreeSlots.filter(s => !this._notifiedSlotKeys.has(slotKey(s)))
 
-      if (newSlots.length > 0 && this._previousSlotKeys.size > 0) {
-        this.onLog(`NEW slots detected: ${newSlots.length}`)
+      const isFirstPoll = this._previousSlotKeys.size === 0
+      const mode = this._config.monitoring?.mode
+
+      // Telegram: надсилаємо тільки ті, про які ще не повідомляли (скіпаємо перший пол в search)
+      if (neverNotified.length > 0 && (mode === 'book' || !isFirstPoll)) {
+        this.onLog(`NEW slots detected: ${neverNotified.length}`)
         this.onStatus('found')
-        this.onSlotsFound(newSlots)
+        this.onSlotsFound(neverNotified)
+        for (const s of neverNotified) {
+          this._notifiedSlotKeys.add(slotKey(s))
+        }
+      }
 
-        // Auto-booking mode
-        const mode = this._config.monitoring?.mode
-        if (mode === 'book') {
-          const bookableSlot = this._findBookableSlot(newSlots)
+      // Auto-booking: перевіряємо і на першому полі
+      if (mode === 'book') {
+        const slotsToCheck = isFirstPoll ? allFreeSlots : neverNotified
+        if (slotsToCheck.length > 0) {
+          if (isFirstPoll) {
+            this.onLog(`First poll in booking mode — checking ${slotsToCheck.length} existing slots...`)
+          }
+          const bookableSlot = this._findBookableSlot(slotsToCheck)
           if (bookableSlot) {
             const meta = this._institutionMeta.get(bookableSlot.institutionCode) || {}
             this.onLog(`AUTO-BOOK: ${bookableSlot.institutionName} ${bookableSlot.date} ${bookableSlot.timeFrom}`)

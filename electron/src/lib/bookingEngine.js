@@ -112,6 +112,8 @@ class BookingEngine {
     // Step 1: Load e-consul login page
     await this.win.loadURL('https://id.e-consul.gov.ua/')
     await this._wait(4000)
+    // Очистити старий токен, щоб не плутати з новим
+    await wc.executeJavaScript('localStorage.removeItem("token")')
     this.onLog('Login page loaded')
 
     // Step 2: Click "id.gov.ua" button (MUI button, 3rd option)
@@ -309,12 +311,33 @@ class BookingEngine {
         resolve(false)
       }, timeoutMs)
 
-      const done = () => {
+      const done = async () => {
         if (resolved) return
-        resolved = true
-        clearTimeout(timeout)
-        this.onLog('Auth complete — waiting for token...')
-        this._wait(8000).then(() => resolve(true))
+        this.onLog('Auth complete — polling for token...')
+        // Поллимо localStorage до появи валідного токена (до 30с)
+        for (let i = 0; i < 30; i++) {
+          if (resolved) return
+          try {
+            const token = await this.win.webContents.executeJavaScript(
+              'localStorage.getItem("token")'
+            )
+            if (token && token.length > 20) {
+              resolved = true
+              clearTimeout(timeout)
+              this.onLog('Token found in localStorage (' + token.length + ' chars)')
+              resolve(true)
+              return
+            }
+          } catch {}
+          await this._wait(1000)
+        }
+        // Токен так і не з'явився
+        if (!resolved) {
+          resolved = true
+          clearTimeout(timeout)
+          this.onLog('Token never appeared in localStorage after 30s')
+          resolve(false)
+        }
       }
 
       const checkUrl = async (url) => {
@@ -358,8 +381,8 @@ class BookingEngine {
       wc.on('did-redirect-navigation', (_evt, url) => checkUrl(url))
       wc.on('will-redirect', (_evt, url) => checkUrl(url))
 
-      // Poll as fallback
-      const poll = setInterval(() => {
+      // Poll as fallback — URL + token check
+      const poll = setInterval(async () => {
         if (resolved) { clearInterval(poll); return }
         if (!this.win || this.win.isDestroyed()) {
           clearInterval(poll)
@@ -367,13 +390,35 @@ class BookingEngine {
           return
         }
         checkUrl(wc.getURL())
+        // Додатково: перевірити появу токена в localStorage
+        if (!resolved) {
+          try {
+            const token = await wc.executeJavaScript('localStorage.getItem("token")')
+            if (token && token.length > 50) {
+              done()
+            }
+          } catch {}
+        }
       }, 2000)
     })
   }
 
   async getToken() {
     if (!this.win || this.win.isDestroyed()) return null
-    return this.win.webContents.executeJavaScript('localStorage.getItem("token")')
+    const token = await this.win.webContents.executeJavaScript('localStorage.getItem("token")')
+    if (!token) return null
+    // Якщо це JWT — перевірити expiry. Якщо opaque token — повертаємо як є.
+    try {
+      const parts = token.split('.')
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString())
+        if (payload.exp && payload.exp * 1000 < Date.now()) {
+          this.onLog('Token expired at: ' + new Date(payload.exp * 1000).toISOString())
+          return null
+        }
+      }
+    } catch { /* не JWT формат — ок */ }
+    return token
   }
 
   close() {

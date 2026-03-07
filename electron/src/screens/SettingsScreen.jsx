@@ -63,11 +63,11 @@ export default function SettingsScreen({ config, onSave }) {
         <h3 className="font-semibold mb-2">Telegram</h3>
         <div>
           <label className={labelCls}>Bot Token</label>
-          <input className={inputCls} value={botToken} onChange={e => setBotToken(e.target.value)} />
+          <input className={inputCls} value={botToken} onChange={e => setBotToken(e.target.value.trim())} />
         </div>
         <div className="mt-2">
           <label className={labelCls}>Отримувач (числовий Chat ID)</label>
-          <input className={inputCls} value={recipient} placeholder="123456789" onChange={e => setRecipient(e.target.value)} />
+          <input className={inputCls} value={recipient} placeholder="123456789" onChange={e => setRecipient(e.target.value.trim())} />
         </div>
         <div className="flex gap-2 mt-2">
           <button onClick={handleTest}

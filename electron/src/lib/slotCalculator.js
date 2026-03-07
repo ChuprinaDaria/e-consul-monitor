@@ -132,10 +132,25 @@ function calculateFreeSlots({
 
 function buildWorkSchedule(receptionCitizensTime) {
   if (!receptionCitizensTime) return new Map()
+
+  // API повертає workingDays (укр текст), не dayOfWeek (число)
+  const dayNameToJs = {
+    'понеділок': 1,
+    'вівторок': 2,
+    'середа': 3,
+    'четвер': 4,
+    "п'ятниця": 5,
+    'субота': 6,
+    'неділя': 0,
+  }
+
   const schedule = new Map()
   for (const entry of receptionCitizensTime) {
-    // dayOfWeek in API: 1=Mon...7=Sun, JS Date.getDay(): 0=Sun,1=Mon...6=Sat
-    const jsDow = entry.dayOfWeek === 7 ? 0 : entry.dayOfWeek
+    // Fallback: dayOfWeek (якщо є) → workingDays (укр текст)
+    const jsDow = entry.dayOfWeek !== undefined
+      ? (entry.dayOfWeek === 7 ? 0 : entry.dayOfWeek)
+      : dayNameToJs[entry.workingDays?.toLowerCase()]
+    if (jsDow === undefined) continue
     if (!schedule.has(jsDow)) schedule.set(jsDow, [])
     schedule.get(jsDow).push({
       from: entry.workingHoursFrom,

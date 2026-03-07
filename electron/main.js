@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron')
+const { app, BrowserWindow, ipcMain, Menu } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const { ConfigStore } = require('./src/lib/configStore')
@@ -40,6 +40,25 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // macOS: без Edit-меню Cmd+C/V/X не працюють в input-полях
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      { role: 'appMenu' },
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'selectAll' },
+        ],
+      },
+    ]))
+  }
+
   const userDataPath = app.getPath('userData')
   configStore = new ConfigStore(userDataPath)
   configStore.load()
@@ -151,7 +170,9 @@ ipcMain.handle('monitor:start', async () => {
   const config = configStore.get()
   const authMethod = config.auth?.method || 'monobank'
 
-  telegram = new TelegramNotifier(config.telegram.botToken, config.telegram.recipient)
+  const botToken = (config.telegram.botToken || '').trim()
+  const recipient = (config.telegram.recipient || '').trim()
+  telegram = new TelegramNotifier(botToken, recipient)
 
   sendToRenderer('monitor:status', 'authenticating')
 
@@ -172,11 +193,15 @@ ipcMain.handle('monitor:start', async () => {
   }
 
   // Send auth link to Telegram
-  sendToRenderer('monitor:log', 'Sending auth link to Telegram...')
-  await telegram.sendMessage(
+  sendToRenderer('monitor:log', `Sending auth link to Telegram (bot=${botToken.slice(0,10)}... chat=${recipient})...`)
+  const sent = await telegram.sendMessage(
     `<b>Авторизація е-Консул</b>\n\nВідкрий лінк у додатку банку:\n${authResult.qrLink}`
   )
-  sendToRenderer('monitor:log', 'Auth link sent to Telegram — waiting for auth...')
+  if (sent) {
+    sendToRenderer('monitor:log', 'Auth link sent to Telegram — waiting for auth...')
+  } else {
+    sendToRenderer('monitor:log', 'FAILED to send auth link to Telegram — check bot token and chat ID')
+  }
   sendToRenderer('monitor:status', 'waiting-auth')
 
   // Wait for user to scan QR (2 min timeout)
@@ -268,14 +293,20 @@ ipcMain.handle('monitor:stop', () => {
 
 // --- telegram ---
 ipcMain.handle('telegram:test', async (_evt, token, recipient) => {
-  const tg = new TelegramNotifier(token, recipient)
-  return tg.sendMessage('e-Consul Monitor: test OK')
+  const cleanToken = (token || '').trim()
+  const cleanRecipient = (recipient || '').trim()
+  console.log(`[telegram:test] token="${cleanToken.slice(0, 10)}..." recipient="${cleanRecipient}"`)
+  const tg = new TelegramNotifier(cleanToken, cleanRecipient)
+  const ok = await tg.sendMessage('e-Consul Monitor: test OK')
+  console.log(`[telegram:test] result=${ok}`)
+  return ok
 })
 
 ipcMain.handle('telegram:resolveChatId', async (_evt, token) => {
   const https = require('https')
+  const cleanToken = (token || '').trim()
   return new Promise((resolve) => {
-    https.get(`https://api.telegram.org/bot${token}/getUpdates?limit=10`, (res) => {
+    https.get(`https://api.telegram.org/bot${cleanToken}/getUpdates?limit=10`, (res) => {
       let body = ''
       res.on('data', c => body += c)
       res.on('end', () => {

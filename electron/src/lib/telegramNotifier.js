@@ -75,9 +75,17 @@ class TelegramNotifier {
       }, (res) => {
         let body = ''
         res.on('data', c => body += c)
-        res.on('end', () => resolve(res.statusCode === 200))
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            console.log(`[TG] ${method} failed: ${res.statusCode} ${body}`)
+          }
+          resolve(res.statusCode === 200)
+        })
       })
-      req.on('error', () => resolve(false))
+      req.on('error', (err) => {
+        console.log(`[TG] ${method} error: ${err.message}`)
+        resolve(false)
+      })
       req.write(data)
       req.end()
     })
