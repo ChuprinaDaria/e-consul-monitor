@@ -2,6 +2,8 @@ appId: com.lazysoft.econsul-monitor
 productName: e-Consul Monitor
 copyright: Copyright © 2026 Lazysoft
 
+publish: null
+
 directories:
   buildResources: assets
   output: release
