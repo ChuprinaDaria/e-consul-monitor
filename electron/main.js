@@ -13,39 +13,50 @@ let configStore
 let monitor = null
 let telegram = null
 
-function formatDuration(ms) {
-  const sec = Math.floor(ms / 1000)
-  if (sec < 60) return `${sec} сек`
-  const min = Math.floor(sec / 60)
-  if (min < 60) return `${min} хв`
-  const hrs = Math.floor(min / 60)
-  const remainMin = min % 60
-  return remainMin > 0 ? `${hrs} год ${remainMin} хв` : `${hrs} год`
+// Пул кольорів для автоматичного призначення консульствам
+const COLOR_POOL = ['🟢', '🔴', '🔵', '🟡', '🟣', '🟠', '⚪']
+const _consulateColorCache = new Map()
+
+function getConsulateEmoji(name) {
+  if (_consulateColorCache.has(name)) return _consulateColorCache.get(name)
+  const color = COLOR_POOL[_consulateColorCache.size % COLOR_POOL.length]
+  _consulateColorCache.set(name, color)
+  return color
 }
 
-function formatSlotsMessage(title, slots) {
-  // Group by consulate
+function formatDateDot(dateStr) {
+  // "2026-03-16" → "16.03.2026"
+  const [y, m, d] = dateStr.split('-')
+  return `${d}.${m}.${y}`
+}
+
+function formatSlotsMessages(slots) {
+  // Групуємо: consulate → date → [times]
   const byConsulate = new Map()
   for (const s of slots) {
     const name = s.institutionName || s.institutionCode
-    if (!byConsulate.has(name)) byConsulate.set(name, [])
-    byConsulate.get(name).push(s)
+    if (!byConsulate.has(name)) byConsulate.set(name, new Map())
+    const byDate = byConsulate.get(name)
+    if (!byDate.has(s.date)) byDate.set(s.date, [])
+    byDate.get(s.date).push(s.timeFrom)
   }
 
-  let text = `${title}\n`
-  for (const [name, consulSlots] of byConsulate) {
-    text += `\n<b>${name.toUpperCase()}</b>\n`
-    const show = consulSlots.slice(0, 10)
-    for (const s of show) {
-      const duration = s.availableMs > 0 ? ` (доступний ${formatDuration(s.availableMs)})` : ''
-      text += `  📅 ${s.date}  🕐 ${s.timeFrom}-${s.timeTo}${duration}\n`
-    }
-    if (consulSlots.length > 10) {
-      text += `  ...ще ${consulSlots.length - 10}\n`
+  // Окреме повідомлення для кожного консульства+дати
+  const messages = []
+  for (const [name, byDate] of byConsulate) {
+    const emoji = getConsulateEmoji(name)
+    // Коротка назва міста з повної назви
+    const cityMatch = name.match(/в\s+(.+)$/) || name.match(/у\s+(.+)$/)
+    const city = cityMatch ? cityMatch[1] : name
+
+    for (const [date, times] of byDate) {
+      times.sort()
+      const timesList = times.join('  ')
+      const text = `${emoji} Є слоти в ${city}!\n🕐 Доступні часи:\n<b>${formatDateDot(date)}</b>\n${timesList}`
+      messages.push({ text, consulateName: name })
     }
   }
-  text += `\nВсього: <b>${slots.length}</b>`
-  return text
+  return messages
 }
 
 function sendToRenderer(channel, data) {
@@ -330,28 +341,11 @@ ipcMain.handle('monitor:start', async () => {
     onStatus: (status) => sendToRenderer('monitor:status', status),
     onAuthExpired: () => reauth(config, authMethod),
     onSlotsFound: async (slots) => {
-      const text = formatSlotsMessage('🔔 <b>НОВІ СЛОТИ!</b>', slots)
-      await telegram.sendMessage(text, ECONSUL_LINK)
-      sendToRenderer('monitor:log', `Sent ${slots.length} slots to Telegram`)
-    },
-    onSlotsGone: async (slots) => {
-      if (!telegram) return
-      const byConsulate = new Map()
-      for (const s of slots) {
-        const name = s.institutionName || s.institutionCode
-        if (!byConsulate.has(name)) byConsulate.set(name, [])
-        byConsulate.get(name).push(s)
+      const messages = formatSlotsMessages(slots)
+      for (const msg of messages) {
+        await telegram.sendMessage(msg.text, { linkUrl: ECONSUL_LINK.linkUrl, linkText: '📎 Записатися' })
       }
-      let text = '❌ <b>Слоти зникли</b>\n'
-      for (const [name, consulSlots] of byConsulate) {
-        text += `\n<b>${name.toUpperCase()}</b>\n`
-        for (const s of consulSlots.slice(0, 10)) {
-          text += `  ${s.date} ${s.timeFrom}-${s.timeTo} — був доступний ${formatDuration(s.availableMs)}\n`
-        }
-        if (consulSlots.length > 10) text += `  ...ще ${consulSlots.length - 10}\n`
-      }
-      await telegram.sendMessage(text, ECONSUL_LINK)
-      sendToRenderer('monitor:log', `Notified ${slots.length} slots gone`)
+      sendToRenderer('monitor:log', `Sent ${messages.length} messages (${slots.length} slots) to Telegram`)
     },
     onBookingRequest: async (slot, timeZone) => {
       if (isBooking) {

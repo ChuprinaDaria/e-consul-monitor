@@ -87,9 +87,9 @@ export default function MainScreen({ config, onSave }) {
           <p className="font-medium text-amber-800">Режим бронювання</p>
           <p className="text-amber-700">
             При знаходженні слоту в заданому інтервалі — автоматичне бронювання.
-            {config.monitoring.bookingTimeFrom && config.monitoring.bookingTimeTo
-              ? ` Інтервал: ${config.monitoring.bookingTimeFrom} — ${config.monitoring.bookingTimeTo}`
-              : ' Інтервал не задано — вкажи у вкладці "Користувач"'}
+            {config.monitoring.bookingDateFrom && config.monitoring.bookingDateTo
+              ? ` Дати: ${config.monitoring.bookingDateFrom} — ${config.monitoring.bookingDateTo}`
+              : ' Діапазон дат не задано — вкажи у вкладці "Користувач"'}
           </p>
         </div>
       )}

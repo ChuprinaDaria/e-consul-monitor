@@ -15,8 +15,8 @@ export default function UserFormScreen({ config, onSave }) {
     serviceCode: config.consulate.serviceCode || '',
     monitorAll: config.consulate.monitorAll || false,
     minDate: config.monitoring.minDate || '',
-    bookingTimeFrom: config.monitoring.bookingTimeFrom || '',
-    bookingTimeTo: config.monitoring.bookingTimeTo || '',
+    bookingDateFrom: config.monitoring.bookingDateFrom || '',
+    bookingDateTo: config.monitoring.bookingDateTo || '',
   })
   const [bookingTarget, setBookingTarget] = useState(config.bookingFor?.target || 'self')
   const [persons, setPersons] = useState(config.bookingFor?.persons || [])
@@ -67,8 +67,8 @@ export default function UserFormScreen({ config, onSave }) {
       monitoring: {
         ...config.monitoring,
         minDate: form.minDate,
-        bookingTimeFrom: form.bookingTimeFrom,
-        bookingTimeTo: form.bookingTimeTo,
+        bookingDateFrom: form.bookingDateFrom,
+        bookingDateTo: form.bookingDateTo,
       },
       bookingFor: {
         target: bookingTarget,
@@ -237,21 +237,21 @@ export default function UserFormScreen({ config, onSave }) {
       </div>
 
       <div>
-        <label className={labelCls}>Бажаний інтервал часу (для бронювання)</label>
+        <label className={labelCls}>Бажаний інтервал дат</label>
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="text-xs text-gray-500">Від</label>
-            <input className={inputCls} type="time" value={form.bookingTimeFrom}
-              onChange={e => set('bookingTimeFrom', e.target.value)} />
+            <input className={inputCls} type="date" value={form.bookingDateFrom}
+              onChange={e => set('bookingDateFrom', e.target.value)} />
           </div>
           <div>
             <label className="text-xs text-gray-500">До</label>
-            <input className={inputCls} type="time" value={form.bookingTimeTo}
-              onChange={e => set('bookingTimeTo', e.target.value)} />
+            <input className={inputCls} type="date" value={form.bookingDateTo}
+              onChange={e => set('bookingDateTo', e.target.value)} />
           </div>
         </div>
         <p className="text-xs text-gray-500 mt-1">
-          В режимі "Бронювати" — бронюватиме тільки слоти в цьому інтервалі
+          Шукатиме та бронюватиме слоти тільки в цьому діапазоні дат
         </p>
       </div>
 

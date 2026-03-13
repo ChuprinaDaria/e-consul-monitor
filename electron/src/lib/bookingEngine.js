@@ -369,7 +369,7 @@ class BookingEngine {
 
   async _loginWithKep(wc, kep) {
     // Click "Особистий ключ"
-    await wc.executeJavaScript(`
+    const clicked = await wc.executeJavaScript(`
       (function() {
         const els = document.querySelectorAll('button, a, [role="button"], label, span');
         for (const el of els) {
@@ -378,23 +378,48 @@ class BookingEngine {
         return false;
       })()
     `)
+    this.onLog('KEP: clicked "Особистий ключ": ' + clicked)
     await this._wait(4000)
 
-    // Upload KEP file via CDP
+    // Клікнути таб "Файловий ключ" (на випадок якщо відкрився інший таб)
+    await wc.executeJavaScript(`
+      (function() {
+        var tab = document.querySelector('#id-app-login-sign-form-tab-file-key');
+        if (tab) { tab.click(); return true; }
+        return false;
+      })()
+    `)
+    await this._wait(1000)
+
+    // Upload KEP file via CDP з retry
     try {
       wc.debugger.attach('1.3')
-      const { root } = await wc.debugger.sendCommand('DOM.getDocument')
-      const { nodeId } = await wc.debugger.sendCommand('DOM.querySelector', {
-        nodeId: root.nodeId,
-        selector: 'input[type="file"]',
-      })
+      let nodeId = 0
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const { root } = await wc.debugger.sendCommand('DOM.getDocument')
+        const result = await wc.debugger.sendCommand('DOM.querySelector', {
+          nodeId: root.nodeId,
+          selector: 'input[type="file"]',
+        })
+        nodeId = result.nodeId
+        if (nodeId > 0) break
+        this.onLog(`KEP: file input not found, retry ${attempt + 1}/5...`)
+        await this._wait(2000)
+      }
+      if (!nodeId || nodeId === 0) {
+        this.onLog('KEP: file input not found after 5 attempts')
+        wc.debugger.detach()
+        return false
+      }
       await wc.debugger.sendCommand('DOM.setFileInputFiles', {
         nodeId,
         files: [kep.keyPath],
       })
       wc.debugger.detach()
+      this.onLog('KEP: file uploaded')
     } catch (err) {
       this.onLog('CDP file upload error: ' + err.message)
+      try { wc.debugger.detach() } catch {}
       return false
     }
 

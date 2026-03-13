@@ -169,6 +169,17 @@ class SlotMonitor {
         }
       }
 
+      // Filter by date range if set
+      const dateFrom = this._config.monitoring?.bookingDateFrom
+      const dateTo = this._config.monitoring?.bookingDateTo
+      if (dateFrom && dateTo) {
+        const before = allFreeSlots.length
+        const filtered = allFreeSlots.filter(s => s.date >= dateFrom && s.date <= dateTo)
+        allFreeSlots.length = 0
+        allFreeSlots.push(...filtered)
+        this.onLog(`Date filter ${dateFrom} — ${dateTo}: ${before} → ${allFreeSlots.length} slots`)
+      }
+
       this.onLog(`Total free slots across ${codes.length} consulate(s): ${allFreeSlots.length}`)
 
       // Detect slots never notified before (accumulative — no duplicates from "flickering")
@@ -208,8 +219,13 @@ class SlotMonitor {
         return { ...s, availableMs: entry ? now - entry.timestamp : 0 }
       })
 
-      // Telegram: надсилаємо тільки ті, про які ще не повідомляли (скіпаємо перший пол в search)
-      if (enriched.length > 0 && (mode === 'book' || !isFirstPoll)) {
+      // Перший пол в search — запам'ятати всі слоти як "вже відомі", не спамити в ТГ
+      if (isFirstPoll && mode !== 'book') {
+        this.onLog(`First poll (search) — marking ${neverNotified.length} existing slots as known`)
+        for (const s of neverNotified) {
+          this._notifiedSlotKeys.add(slotKey(s))
+        }
+      } else if (enriched.length > 0) {
         this.onLog(`NEW slots detected: ${enriched.length}`)
         this.onStatus('found')
         this.onSlotsFound(enriched)
@@ -287,19 +303,19 @@ class SlotMonitor {
   }
 
   _findBookableSlot(slots) {
-    const timeFrom = this._config.monitoring?.bookingTimeFrom
-    const timeTo = this._config.monitoring?.bookingTimeTo
+    const dateFrom = this._config.monitoring?.bookingDateFrom
+    const dateTo = this._config.monitoring?.bookingDateTo
 
-    if (!timeFrom || !timeTo) {
-      this.onLog('Booking mode active but no time interval set — skipping auto-book')
+    if (!dateFrom || !dateTo) {
+      this.onLog('Booking mode active but no date range set — skipping auto-book')
       return null
     }
 
-    // Filter slots within the desired time interval
-    const matching = slots.filter(s => s.timeFrom >= timeFrom && s.timeFrom < timeTo)
+    // Filter slots within the desired date range
+    const matching = slots.filter(s => s.date >= dateFrom && s.date <= dateTo)
 
     if (matching.length === 0) {
-      this.onLog(`No slots in booking interval ${timeFrom}-${timeTo}`)
+      this.onLog(`No slots in date range ${dateFrom} — ${dateTo}`)
       return null
     }
 
