@@ -1,5 +1,5 @@
 appId: com.lazysoft.econsul-monitor
-productName: e-Consul Monitor
+productName: eConsulMonitor
 copyright: Copyright © 2026 Lazysoft
 
 publish: null
@@ -34,4 +34,4 @@ nsis:
   allowToChangeInstallationDirectory: false
 
 dmg:
-  title: e-Consul Monitor
+  title: eConsulMonitor
