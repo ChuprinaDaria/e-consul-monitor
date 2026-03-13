@@ -337,108 +337,7 @@ class BookingEngine {
 
   async waitForAuthComplete(timeoutMs = 120000) {
     if (!this.win) return false
-    const wc = this.win.webContents
-    let resolved = false
-    let callbackClicked = false
-
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        if (resolved) return
-        resolved = true
-        this.onLog('Auth timeout')
-        resolve(false)
-      }, timeoutMs)
-
-      const done = async () => {
-        if (resolved) return
-        this.onLog('Auth complete — polling for token...')
-        // Поллимо localStorage до появи валідного токена (до 30с)
-        for (let i = 0; i < 30; i++) {
-          if (resolved) return
-          try {
-            const token = await this.win.webContents.executeJavaScript(
-              'localStorage.getItem("token")'
-            )
-            if (token && token.length > 20) {
-              resolved = true
-              clearTimeout(timeout)
-              this.onLog('Token found in localStorage (' + token.length + ' chars)')
-              resolve(true)
-              return
-            }
-          } catch {}
-          await this._wait(1000)
-        }
-        // Токен так і не з'явився
-        if (!resolved) {
-          resolved = true
-          clearTimeout(timeout)
-          this.onLog('Token never appeared in localStorage after 30s')
-          resolve(false)
-        }
-      }
-
-      const checkUrl = async (url) => {
-        if (resolved) return
-        this.onLog('Nav: ' + url.split('?')[0])
-
-        // Intermediate: id.gov.ua/bankid-auth-callback — "Перевірте дані" page
-        // Must click "Продовжити" (#btnAcceptUserDataAgreement) to continue
-        if (url.includes('bankid-auth-callback') && !callbackClicked) {
-          callbackClicked = true
-          this.onLog('Callback page — clicking Продовжити...')
-          await this._wait(2000)
-          try {
-            await wc.executeJavaScript(`
-              (function() {
-                var btn = document.querySelector('#btnAcceptUserDataAgreement');
-                if (btn) { btn.click(); return true; }
-                var btns = document.querySelectorAll('button, input[type="submit"]');
-                for (var b of btns) {
-                  if ((b.textContent || b.value || '').includes('Продовжити')) { b.click(); return true; }
-                }
-                return false;
-              })()
-            `)
-            this.onLog('Clicked Продовжити on callback page')
-          } catch (err) {
-            this.onLog('Error clicking callback button: ' + err.message)
-          }
-          return
-        }
-
-        // Final: e-consul.gov.ua with code or dashboard
-        if (url.includes('e-consul.gov.ua/messages') || url.includes('e-consul.gov.ua/tasks')) {
-          done()
-        } else if (url.includes('e-consul.gov.ua') && url.includes('code=')) {
-          done()
-        }
-      }
-
-      wc.on('did-navigate', (_evt, url) => checkUrl(url))
-      wc.on('did-redirect-navigation', (_evt, url) => checkUrl(url))
-      wc.on('will-redirect', (_evt, url) => checkUrl(url))
-
-      // Poll as fallback — URL + token check
-      const poll = setInterval(async () => {
-        if (resolved) { clearInterval(poll); return }
-        if (!this.win || this.win.isDestroyed()) {
-          clearInterval(poll)
-          if (!resolved) { resolved = true; resolve(false) }
-          return
-        }
-        checkUrl(wc.getURL())
-        // Додатково: перевірити появу токена в localStorage
-        if (!resolved) {
-          try {
-            const token = await wc.executeJavaScript('localStorage.getItem("token")')
-            if (token && token.length > 50) {
-              done()
-            }
-          } catch {}
-        }
-      }, 2000)
-    })
+    return this._waitForToken(this.win.webContents, timeoutMs)
   }
 
   async getToken() {
@@ -511,17 +410,131 @@ class BookingEngine {
         setter.call(pwd, ${JSON.stringify(kep.keyPassword)});
         pwd.dispatchEvent(new Event('input', {bubbles: true}));
         pwd.dispatchEvent(new Event('change', {bubbles: true}));
-        const submit = pwd.closest('form')?.querySelector('button[type="submit"]');
-        if (submit) submit.click();
-        else pwd.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));
         return true;
       })()
     `)
+    await this._wait(500)
 
-    await this._wait(12000)
+    // Click "Продовжити" button
+    const signClicked = await wc.executeJavaScript(`
+      (function() {
+        // Точний ID кнопки "Продовжити" на формі KEP
+        var btn = document.querySelector('#id-app-login-sign-form-file-key-sign-button');
+        if (btn) { btn.click(); return 'by-id'; }
+        // Fallback: шукаємо по тексту
+        var btns = document.querySelectorAll('button');
+        for (var b of btns) {
+          if ((b.textContent || '').includes('Продовжити')) { b.click(); return 'by-text'; }
+        }
+        return false;
+      })()
+    `)
+    this.onLog('KEP sign button: ' + signClicked)
 
-    const hasJwt = await wc.executeJavaScript('!!localStorage.getItem("token")')
-    return hasJwt
+    // Чекаємо токен так само як при BankID: слухаємо навігацію + поллим localStorage
+    return await this._waitForToken(wc, 60000)
+  }
+
+  /**
+   * Спільна логіка очікування токена після логіну (BankID / KEP).
+   * Слухає навігацію, клікає "Продовжити" на callback-сторінці, поллить localStorage.
+   */
+  async _waitForToken(wc, timeoutMs = 60000) {
+    let resolved = false
+    let callbackClicked = false
+
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        if (resolved) return
+        resolved = true
+        this.onLog('Token wait timeout')
+        resolve(false)
+      }, timeoutMs)
+
+      const done = async () => {
+        if (resolved) return
+        // Поллимо localStorage до появи токена (до 30с)
+        for (let i = 0; i < 30; i++) {
+          if (resolved) return
+          try {
+            const token = await wc.executeJavaScript('localStorage.getItem("token")')
+            if (token && token.length > 20) {
+              resolved = true
+              clearTimeout(timeout)
+              this.onLog('Token found (' + token.length + ' chars)')
+              resolve(true)
+              return
+            }
+          } catch {}
+          await this._wait(1000)
+        }
+        if (!resolved) {
+          resolved = true
+          clearTimeout(timeout)
+          this.onLog('Token never appeared after polling')
+          resolve(false)
+        }
+      }
+
+      const checkUrl = async (url) => {
+        if (resolved) return
+
+        // Callback-сторінка "Перевірте дані" — треба клікнути "Продовжити"
+        if (url.includes('bankid-auth-callback') && !callbackClicked) {
+          callbackClicked = true
+          this.onLog('Callback page — clicking Продовжити...')
+          await this._wait(2000)
+          try {
+            await wc.executeJavaScript(`
+              (function() {
+                var btn = document.querySelector('#btnAcceptUserDataAgreement');
+                if (btn) { btn.click(); return true; }
+                var btns = document.querySelectorAll('button, input[type="submit"]');
+                for (var b of btns) {
+                  if ((b.textContent || b.value || '').includes('Продовжити')) { b.click(); return true; }
+                }
+                return false;
+              })()
+            `)
+            this.onLog('Clicked Продовжити on callback page')
+          } catch (err) {
+            this.onLog('Error clicking callback button: ' + err.message)
+          }
+          return
+        }
+
+        // Фінальний редірект на портал — починаємо поллити токен
+        if (url.includes('e-consul.gov.ua/messages') || url.includes('e-consul.gov.ua/tasks')) {
+          done()
+        } else if (url.includes('e-consul.gov.ua') && url.includes('code=')) {
+          done()
+        }
+      }
+
+      wc.on('did-navigate', (_evt, url) => checkUrl(url))
+      wc.on('did-redirect-navigation', (_evt, url) => checkUrl(url))
+      wc.on('will-redirect', (_evt, url) => checkUrl(url))
+
+      // Поллінг як fallback
+      const poll = setInterval(async () => {
+        if (resolved) { clearInterval(poll); return }
+        if (!this.win || this.win.isDestroyed()) {
+          clearInterval(poll)
+          if (!resolved) { resolved = true; resolve(false) }
+          return
+        }
+        checkUrl(wc.getURL())
+        // Перевіряємо токен навіть без редіректу
+        if (!resolved) {
+          try {
+            const token = await wc.executeJavaScript('localStorage.getItem("token")')
+            if (token && token.length > 50) {
+              done()
+            }
+          } catch {}
+        }
+      }, 2000)
+    })
   }
 
   // --- Private: Wizard steps ---
