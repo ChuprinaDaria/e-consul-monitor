@@ -60,7 +60,7 @@ class BookingService {
   }
 
   async _fillSteps(docId, config, logId) {
-    const { user, consulate } = config
+    const { user, consulate, bookingFor } = config
     const properties = [
       { path: 'consularServiceInfo.whoReceivesService.1', value: 'applicant' },
       { path: 'consularServiceInfo.personArray.0.lastName', value: user.surname },
@@ -77,6 +77,19 @@ class BookingService {
       properties.push({
         path: 'consularServiceInfo.personArray.0.sex',
         value: user.gender === 'Чоловіча' ? 'male' : 'female',
+      })
+    }
+
+    // Booking for child/ward: додаємо whoReceivesService.2 = 'child' + дані осіб
+    if (bookingFor?.target === 'other' && bookingFor.persons?.length > 0) {
+      properties.push({ path: 'consularServiceInfo.whoReceivesService.2', value: 'child' })
+      bookingFor.persons.forEach((person, i) => {
+        const idx = i + 1 // personArray.0 = applicant, personArray.1+ = children
+        properties.push({ path: `consularServiceInfo.personArray.${idx}.lastName`, value: person.surname })
+        properties.push({ path: `consularServiceInfo.personArray.${idx}.firstName`, value: person.name })
+        if (person.patronymic && !person.noPatronymic) {
+          properties.push({ path: `consularServiceInfo.personArray.${idx}.middleName`, value: person.patronymic })
+        }
       })
     }
 

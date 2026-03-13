@@ -20,6 +20,8 @@ class ConfigStore {
         user: { surname: '', name: '', patronymic: '', birthdate: '', gender: '' },
         consulate: { country: '', institution: '', institutionCode: '', service: '', serviceCode: '' },
         auth: { method: 'monobank' },
+        kep: { keyPath: '', keyPassword: '' },
+        bookingFor: { target: 'self', persons: [] },
         telegram: { botToken: '', recipient: '' },
         monitoring: { pollIntervalMs: 3000, minDate: '', mode: 'search', bookingTimeFrom: '', bookingTimeTo: '' },
       }

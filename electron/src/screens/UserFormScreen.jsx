@@ -18,10 +18,27 @@ export default function UserFormScreen({ config, onSave }) {
     bookingTimeFrom: config.monitoring.bookingTimeFrom || '',
     bookingTimeTo: config.monitoring.bookingTimeTo || '',
   })
+  const [bookingTarget, setBookingTarget] = useState(config.bookingFor?.target || 'self')
+  const [persons, setPersons] = useState(config.bookingFor?.persons || [])
   const [saved, setSaved] = useState(false)
 
   function set(field, value) {
     setForm(f => ({ ...f, [field]: value }))
+    setSaved(false)
+  }
+
+  function addPerson() {
+    setPersons(p => [...p, { surname: '', name: '', patronymic: '', noPatronymic: false }])
+    setSaved(false)
+  }
+
+  function removePerson(i) {
+    setPersons(p => p.filter((_, idx) => idx !== i))
+    setSaved(false)
+  }
+
+  function updatePerson(i, field, value) {
+    setPersons(p => p.map((person, idx) => idx === i ? { ...person, [field]: value } : person))
     setSaved(false)
   }
 
@@ -52,6 +69,10 @@ export default function UserFormScreen({ config, onSave }) {
         minDate: form.minDate,
         bookingTimeFrom: form.bookingTimeFrom,
         bookingTimeTo: form.bookingTimeTo,
+      },
+      bookingFor: {
+        target: bookingTarget,
+        persons: bookingTarget === 'other' ? persons : [],
       },
     })
     setSaved(true)
@@ -94,6 +115,61 @@ export default function UserFormScreen({ config, onSave }) {
           </select>
         </div>
       </div>
+
+      <section>
+        <h3 className="font-semibold mb-2">Для кого бронюємо</h3>
+        <div className="flex gap-4">
+          <label className="flex items-center gap-1 text-sm">
+            <input type="radio" name="bookingTarget" value="self"
+              checked={bookingTarget === 'self'} onChange={() => { setBookingTarget('self'); setSaved(false) }} />
+            Для себе
+          </label>
+          <label className="flex items-center gap-1 text-sm">
+            <input type="radio" name="bookingTarget" value="other"
+              checked={bookingTarget === 'other'} onChange={() => { setBookingTarget('other'); setSaved(false) }} />
+            Для дитини / підопічного
+          </label>
+        </div>
+
+        {bookingTarget === 'other' && (
+          <div className="mt-3 space-y-3">
+            {persons.map((p, i) => (
+              <div key={i} className="border rounded p-3 space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-medium">Особа {i + 1}</span>
+                  <button onClick={() => removePerson(i)} className="text-red-500 text-sm hover:text-red-700">Видалити</button>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-xs text-gray-500">Прізвище</label>
+                    <input className={inputCls} value={p.surname} onChange={e => updatePerson(i, 'surname', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500">Ім'я</label>
+                    <input className={inputCls} value={p.name} onChange={e => updatePerson(i, 'name', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500">По батькові</label>
+                    <div className="flex items-center gap-1">
+                      <input className={inputCls} value={p.patronymic} disabled={p.noPatronymic}
+                        onChange={e => updatePerson(i, 'patronymic', e.target.value)} />
+                    </div>
+                    <label className="flex items-center gap-1 mt-1 text-xs text-gray-500">
+                      <input type="checkbox" checked={p.noPatronymic || false}
+                        onChange={e => updatePerson(i, 'noPatronymic', e.target.checked)} />
+                      Немає
+                    </label>
+                  </div>
+                </div>
+              </div>
+            ))}
+            <button onClick={addPerson}
+              className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded text-sm">
+              + Додати особу
+            </button>
+          </div>
+        )}
+      </section>
 
       <div>
         <label className={labelCls}>Країна</label>

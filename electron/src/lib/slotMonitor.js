@@ -4,16 +4,18 @@ const { calculateFreeSlots } = require('./slotCalculator')
 const BATCH_SIZE = 20
 
 class SlotMonitor {
-  constructor({ webContents, onLog, onStatus, onSlotsFound, onBookingRequest, onAuthExpired }) {
+  constructor({ webContents, onLog, onStatus, onSlotsFound, onSlotsGone, onBookingRequest, onAuthExpired }) {
     this.api = new EQueueApi(webContents)
     this.onLog = onLog || (() => {})
     this.onStatus = onStatus || (() => {})
     this.onSlotsFound = onSlotsFound || (() => {})
+    this.onSlotsGone = onSlotsGone || (() => {})
     this.onBookingRequest = onBookingRequest || (() => {})
     this.onAuthExpired = onAuthExpired || (() => {})
     this._timer = null
     this._previousSlotKeys = new Set()
     this._notifiedSlotKeys = new Set() // накопичувальний — слот надсилається в ТГ лише раз
+    this._slotFirstSeen = new Map() // slotKey → { timestamp, slot }
     this._running = false
     this._reauthing = false
     this._institutionCodes = null // cached list for "all" mode
@@ -28,6 +30,7 @@ class SlotMonitor {
     this._config = config
     this._previousSlotKeys = new Set()
     this._notifiedSlotKeys = new Set()
+    this._slotFirstSeen = new Map()
     this._institutionCodes = null
     this._holidays = []
     this._slotIntervalMap = new Map()
@@ -170,17 +173,46 @@ class SlotMonitor {
 
       // Detect slots never notified before (accumulative — no duplicates from "flickering")
       const slotKey = (s) => `${s.institutionCode} ${s.date} ${s.timeFrom} ${s.consulIpnHash}`
+      const now = Date.now()
       const currentKeys = new Set(allFreeSlots.map(slotKey))
+
+      // Track firstSeen for all current slots
+      for (const s of allFreeSlots) {
+        const key = slotKey(s)
+        if (!this._slotFirstSeen.has(key)) {
+          this._slotFirstSeen.set(key, { timestamp: now, slot: s })
+        }
+      }
+
+      // Detect disappeared slots and notify
+      const goneSlots = []
+      for (const [key, { timestamp, slot }] of this._slotFirstSeen) {
+        if (!currentKeys.has(key)) {
+          goneSlots.push({ ...slot, availableMs: now - timestamp })
+          this._slotFirstSeen.delete(key)
+        }
+      }
+      if (goneSlots.length > 0) {
+        this.onLog(`Slots gone: ${goneSlots.length}`)
+        this.onSlotsGone(goneSlots)
+      }
+
       const neverNotified = allFreeSlots.filter(s => !this._notifiedSlotKeys.has(slotKey(s)))
 
       const isFirstPoll = this._previousSlotKeys.size === 0
       const mode = this._config.monitoring?.mode
 
+      // Enrich slots with availability duration
+      const enriched = neverNotified.map(s => {
+        const entry = this._slotFirstSeen.get(slotKey(s))
+        return { ...s, availableMs: entry ? now - entry.timestamp : 0 }
+      })
+
       // Telegram: надсилаємо тільки ті, про які ще не повідомляли (скіпаємо перший пол в search)
-      if (neverNotified.length > 0 && (mode === 'book' || !isFirstPoll)) {
-        this.onLog(`NEW slots detected: ${neverNotified.length}`)
+      if (enriched.length > 0 && (mode === 'book' || !isFirstPoll)) {
+        this.onLog(`NEW slots detected: ${enriched.length}`)
         this.onStatus('found')
-        this.onSlotsFound(neverNotified)
+        this.onSlotsFound(enriched)
         for (const s of neverNotified) {
           this._notifiedSlotKeys.add(slotKey(s))
         }

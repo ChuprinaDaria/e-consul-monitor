@@ -297,6 +297,44 @@ class BookingEngine {
     return { qrLink: deepLink }
   }
 
+  /**
+   * KEP auth: автоматичний логін через файловий ключ (~15 сек).
+   * Не потребує участі юзера — ідеально для авто-релогіну.
+   */
+  async startAuthKep(kepConfig) {
+    this._authSession = session.fromPartition(`auth-${Date.now()}`)
+
+    this.win = new BrowserWindow({
+      width: 1920, height: 1080, show: false,
+      webPreferences: {
+        contextIsolation: false,
+        nodeIntegration: false,
+        session: this._authSession,
+      },
+    })
+
+    const wc = this.win.webContents
+
+    try {
+      await this.win.loadURL('https://id.e-consul.gov.ua/')
+      await this._wait(4000)
+      await wc.executeJavaScript('localStorage.removeItem("token")')
+      this.onLog('KEP: Login page loaded')
+
+      const loggedIn = await this._loginWithKep(wc, kepConfig)
+      if (!loggedIn) {
+        this.onLog('KEP: Login failed — no token')
+        return false
+      }
+
+      this.onLog('KEP: Auth complete — token found')
+      return true
+    } catch (err) {
+      this.onLog('KEP auth error: ' + err.message)
+      return false
+    }
+  }
+
   async waitForAuthComplete(timeoutMs = 120000) {
     if (!this.win) return false
     const wc = this.win.webContents

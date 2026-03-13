@@ -11,13 +11,19 @@ class TelegramNotifier {
     this.recipient = recipient
   }
 
-  async sendMessage(text) {
+  async sendMessage(text, { linkUrl, linkText } = {}) {
     if (!this.botToken || !this.recipient) return false
-    return this._post('sendMessage', {
+    const payload = {
       chat_id: this.recipient,
       text,
       parse_mode: 'HTML',
-    })
+    }
+    if (linkUrl) {
+      payload.reply_markup = JSON.stringify({
+        inline_keyboard: [[{ text: linkText || '🌐 Відкрити e-Consul', url: linkUrl }]],
+      })
+    }
+    return this._post('sendMessage', payload)
   }
 
   async sendPhoto(photoUrl, caption) {

@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeUserYaml: (alias, yaml) => ipcRenderer.invoke('users:writeYaml', alias, yaml),
   deleteUser: (alias) => ipcRenderer.invoke('users:delete', alias),
 
+  // kep
+  selectKeyFile: () => ipcRenderer.invoke('dialog:selectKeyFile'),
+
   // telegram
   testTelegram: (token, recipient) => ipcRenderer.invoke('telegram:test', token, recipient),
   resolveChatId: (token) => ipcRenderer.invoke('telegram:resolveChatId', token),

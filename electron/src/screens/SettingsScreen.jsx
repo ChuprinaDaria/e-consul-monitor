@@ -2,6 +2,8 @@ import React, { useState } from 'react'
 
 export default function SettingsScreen({ config, onSave }) {
   const [authMethod, setAuthMethod] = useState(config.auth?.method || 'monobank')
+  const [kepKeyPath, setKepKeyPath] = useState(config.kep?.keyPath || '')
+  const [kepPassword, setKepPassword] = useState(config.kep?.keyPassword || '')
   const [botToken, setBotToken] = useState(config.telegram.botToken)
   const [recipient, setRecipient] = useState(config.telegram.recipient)
   const [pollInterval, setPollInterval] = useState(config.monitoring.pollIntervalMs)
@@ -9,15 +11,22 @@ export default function SettingsScreen({ config, onSave }) {
   const [saved, setSaved] = useState(false)
 
   const authOptions = [
+    { value: 'kep', label: 'Особистий ключ (КЕП)' },
     { value: 'monobank', label: 'id.gov.ua → Monobank' },
     { value: 'privatbank', label: 'id.gov.ua → ПриватБанк' },
     { value: 'oschadbank', label: 'id.gov.ua → Ощадбанк' },
   ]
 
+  async function handleSelectKeyFile() {
+    const filePath = await window.electronAPI.selectKeyFile()
+    if (filePath) setKepKeyPath(filePath)
+  }
+
   async function handleSave() {
     await onSave({
       ...config,
       auth: { method: authMethod },
+      kep: { keyPath: kepKeyPath, keyPassword: kepPassword },
       telegram: { botToken, recipient },
       monitoring: { ...config.monitoring, pollIntervalMs: pollInterval },
     })
@@ -54,9 +63,33 @@ export default function SettingsScreen({ config, onSave }) {
             ))}
           </select>
         </div>
-        <p className="text-xs text-gray-500 mt-1">
-          При старті бот відкриє сторінку банку, надішле лінк у Telegram — скануй у додатку банку
-        </p>
+        {authMethod === 'kep' ? (
+          <div className="mt-3 space-y-2">
+            <div>
+              <label className={labelCls}>Файл ключа</label>
+              <div className="flex gap-2">
+                <input className={inputCls + ' flex-1'} value={kepKeyPath} readOnly placeholder="Не вибрано" />
+                <button onClick={handleSelectKeyFile}
+                  className="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm whitespace-nowrap">
+                  Вибрати файл
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">.jks, .pfx, .pk8, .zs2, .dat</p>
+            </div>
+            <div>
+              <label className={labelCls}>Пароль ключа</label>
+              <input className={inputCls} type="password" value={kepPassword}
+                onChange={e => setKepPassword(e.target.value)} placeholder="Пароль від КЕП" />
+            </div>
+            <p className="text-xs text-gray-500">
+              КЕП — повністю автоматично (~15 сек), не потребує участі юзера
+            </p>
+          </div>
+        ) : (
+          <p className="text-xs text-gray-500 mt-1">
+            При старті бот відкриє сторінку банку, надішле лінк у Telegram — скануй у додатку банку
+          </p>
+        )}
       </section>
 
       <section>
