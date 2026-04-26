@@ -18,7 +18,7 @@ class ConfigStore {
     if (!this._data) {
       this._data = {
         user: { surname: '', name: '', patronymic: '', birthdate: '', gender: '' },
-        consulate: { country: '', institution: '', institutionCode: '', service: '', serviceCode: '' },
+        consulate: { country: '', institution: '', institutionCode: '', service: '', serviceCode: '', searchCountries: [] },
         auth: { method: 'monobank' },
         kep: { keyPath: '', keyPassword: '' },
         bookingFor: { target: 'self', persons: [] },

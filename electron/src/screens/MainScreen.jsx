@@ -39,6 +39,7 @@ export default function MainScreen({ config, onSave }) {
   }
 
   const hasConsulate = config.consulate.institution || config.consulate.monitorAll
+    || config.consulate.searchCountries?.length > 0 || config.consulate.country
   const isConfigured = hasConsulate && config.consulate.service
     && config.telegram.botToken && config.telegram.recipient
 

@@ -1,4 +1,13 @@
-const { BrowserWindow, session } = require('electron')
+const { BrowserWindow, session, app } = require('electron')
+
+// Chrome UA без "Electron" — Cloudflare блокує Electron user-agent
+const CHROME_UA = (() => {
+  const ver = process.versions.chrome || '120.0.0.0'
+  const platform = process.platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10_15_7'
+    : process.platform === 'win32' ? 'Windows NT 10.0; Win64; x64'
+    : 'X11; Linux x86_64'
+  return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${ver} Safari/537.36`
+})()
 
 class BookingEngine {
   constructor({ onLog, onStatus }) {
@@ -96,10 +105,12 @@ class BookingEngine {
    * 6. React app exchanges code for JWT → localStorage.token
    */
   async startAuth(bankName = 'monobank') {
-    this._authSession = session.fromPartition(`auth-${Date.now()}`)
+    this._authSession = session.fromPartition('persist:auth')
+    this._authSession.setUserAgent(CHROME_UA)
 
     this.win = new BrowserWindow({
-      width: 1920, height: 1080, show: false,
+      width: 1280, height: 900, show: true,
+      title: 'e-Consul — авторизація',
       webPreferences: {
         contextIsolation: false,
         nodeIntegration: false,
@@ -111,7 +122,7 @@ class BookingEngine {
 
     // Step 1: Load e-consul login page
     await this.win.loadURL('https://id.e-consul.gov.ua/')
-    await this._wait(4000)
+    await this._waitForCloudflare(wc)
     // Очистити старий токен, щоб не плутати з новим
     await wc.executeJavaScript('localStorage.removeItem("token")')
     this.onLog('Login page loaded')
@@ -302,10 +313,12 @@ class BookingEngine {
    * Не потребує участі юзера — ідеально для авто-релогіну.
    */
   async startAuthKep(kepConfig) {
-    this._authSession = session.fromPartition(`auth-${Date.now()}`)
+    this._authSession = session.fromPartition('persist:auth')
+    this._authSession.setUserAgent(CHROME_UA)
 
     this.win = new BrowserWindow({
-      width: 1920, height: 1080, show: false,
+      width: 1280, height: 900, show: true,
+      title: 'e-Consul — авторизація',
       webPreferences: {
         contextIsolation: false,
         nodeIntegration: false,
@@ -317,7 +330,7 @@ class BookingEngine {
 
     try {
       await this.win.loadURL('https://id.e-consul.gov.ua/')
-      await this._wait(4000)
+      await this._waitForCloudflare(wc)
       await wc.executeJavaScript('localStorage.removeItem("token")')
       this.onLog('KEP: Login page loaded')
 
@@ -328,6 +341,7 @@ class BookingEngine {
       }
 
       this.onLog('KEP: Auth complete — token found')
+      this.win.hide()
       return true
     } catch (err) {
       this.onLog('KEP auth error: ' + err.message)
@@ -368,17 +382,29 @@ class BookingEngine {
   // --- Private: Login ---
 
   async _loginWithKep(wc, kep) {
-    // Click "Особистий ключ"
-    const clicked = await wc.executeJavaScript(`
-      (function() {
-        const els = document.querySelectorAll('button, a, [role="button"], label, span');
-        for (const el of els) {
-          if (el.textContent.includes('Особистий ключ')) { el.click(); return true; }
-        }
-        return false;
-      })()
-    `)
+    // Click "Особистий ключ" з retry (сторінка може довго рендерити React)
+    let clicked = false
+    for (let attempt = 0; attempt < 5; attempt++) {
+      clicked = await wc.executeJavaScript(`
+        (function() {
+          var els = document.querySelectorAll('button, a, [role="button"], label, span');
+          for (var i = 0; i < els.length; i++) {
+            if (els[i].textContent.includes('Особистий ключ')) { els[i].click(); return true; }
+          }
+          return false;
+        })()
+      `)
+      if (clicked) break
+      const debug = await wc.executeJavaScript(`
+        (function() {
+          return { url: location.href, title: document.title, buttons: Array.from(document.querySelectorAll('button')).map(b => b.textContent.trim()).slice(0, 10) };
+        })()
+      `)
+      this.onLog('KEP: page state: ' + JSON.stringify(debug))
+      await this._wait(3000)
+    }
     this.onLog('KEP: clicked "Особистий ключ": ' + clicked)
+    if (!clicked) return false
     await this._wait(4000)
 
     // Клікнути таб "Файловий ключ" (на випадок якщо відкрився інший таб)
@@ -391,34 +417,43 @@ class BookingEngine {
     `)
     await this._wait(1000)
 
-    // Upload KEP file via CDP з retry
+    // Upload KEP file: Runtime.evaluate знаходить input → DOM.requestNode дає nodeId → DOM.setFileInputFiles
     try {
       wc.debugger.attach('1.3')
-      let nodeId = 0
+      await wc.debugger.sendCommand('DOM.enable')
+      await wc.debugger.sendCommand('DOM.getDocument')
+
+      let uploaded = false
       for (let attempt = 0; attempt < 5; attempt++) {
-        const { root } = await wc.debugger.sendCommand('DOM.getDocument')
-        const result = await wc.debugger.sendCommand('DOM.querySelector', {
-          nodeId: root.nodeId,
-          selector: 'input[type="file"]',
+        const { result } = await wc.debugger.sendCommand('Runtime.evaluate', {
+          expression: 'document.querySelector("input[type=\\"file\\"]")',
+          returnByValue: false,
         })
-        nodeId = result.nodeId
-        if (nodeId > 0) break
-        this.onLog(`KEP: file input not found, retry ${attempt + 1}/5...`)
-        await this._wait(2000)
+        if (!result.objectId) {
+          this.onLog('KEP: file input not found, retry ' + (attempt + 1) + '/5...')
+          await this._wait(3000)
+          continue
+        }
+        const { nodeId } = await wc.debugger.sendCommand('DOM.requestNode', {
+          objectId: result.objectId,
+        })
+        await wc.debugger.sendCommand('DOM.setFileInputFiles', {
+          nodeId,
+          files: [kep.keyPath],
+        })
+        uploaded = true
+        break
       }
-      if (!nodeId || nodeId === 0) {
+
+      wc.debugger.detach()
+
+      if (!uploaded) {
         this.onLog('KEP: file input not found after 5 attempts')
-        wc.debugger.detach()
         return false
       }
-      await wc.debugger.sendCommand('DOM.setFileInputFiles', {
-        nodeId,
-        files: [kep.keyPath],
-      })
-      wc.debugger.detach()
       this.onLog('KEP: file uploaded')
     } catch (err) {
-      this.onLog('CDP file upload error: ' + err.message)
+      this.onLog('KEP file upload error: ' + err.message)
       try { wc.debugger.detach() } catch {}
       return false
     }
@@ -723,6 +758,32 @@ class BookingEngine {
   }
 
   // --- Private: Utils ---
+
+  async _waitForCloudflare(wc, timeoutMs = 60000) {
+    const start = Date.now()
+    let shown = false
+    await this._wait(3000)
+    while (Date.now() - start < timeoutMs) {
+      const title = await wc.executeJavaScript('document.title')
+      const isBlocked = title.includes('Cloudflare') || title.includes('Attention Required')
+        || title.includes('blocked') || title.includes('Just a moment')
+      if (!isBlocked) {
+        if (shown) {
+          this.onLog('Cloudflare passed — hiding window')
+          this.win.hide()
+        }
+        return
+      }
+      if (!shown) {
+        this.onLog('Cloudflare challenge — showing window')
+        this.win.show()
+        this.win.focus()
+        shown = true
+      }
+      await this._wait(2000)
+    }
+    throw new Error('Cloudflare challenge timeout')
+  }
 
   async _waitForUrl(wc, urlPart, timeoutMs = 30000) {
     const start = Date.now()

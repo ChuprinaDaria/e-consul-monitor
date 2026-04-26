@@ -14,6 +14,7 @@ export default function UserFormScreen({ config, onSave }) {
     service: config.consulate.service || '',
     serviceCode: config.consulate.serviceCode || '',
     monitorAll: config.consulate.monitorAll || false,
+    searchCountries: config.consulate.searchCountries || [],
     minDate: config.monitoring.minDate || '',
     bookingDateFrom: config.monitoring.bookingDateFrom || '',
     bookingDateTo: config.monitoring.bookingDateTo || '',
@@ -63,6 +64,7 @@ export default function UserFormScreen({ config, onSave }) {
         service: form.service,
         serviceCode: form.serviceCode,
         monitorAll: form.monitorAll,
+        searchCountries: form.searchCountries,
       },
       monitoring: {
         ...config.monitoring,
@@ -172,7 +174,7 @@ export default function UserFormScreen({ config, onSave }) {
       </section>
 
       <div>
-        <label className={labelCls}>Країна</label>
+        <label className={labelCls}>Країна (бронювання)</label>
         <select className={inputCls} value={form.country}
           onChange={e => {
             setForm(f => ({ ...f, country: e.target.value, institution: '', institutionCode: '', monitorAll: false }))
@@ -184,7 +186,7 @@ export default function UserFormScreen({ config, onSave }) {
       </div>
 
       <div>
-        <label className={labelCls}>Консульство</label>
+        <label className={labelCls}>Консульство (бронювання)</label>
         <select className={inputCls}
           value={form.monitorAll ? '__all__' : form.institution}
           onChange={e => {
@@ -210,6 +212,36 @@ export default function UserFormScreen({ config, onSave }) {
         {form.monitorAll && (
           <p className="text-xs text-gray-500 mt-1">
             Моніторинг {allCodesInCountry.length} консульств паралельно
+          </p>
+        )}
+      </div>
+
+      <div>
+        <label className={labelCls}>Пошук слотів — додаткові країни</label>
+        <p className="text-xs text-gray-500 mb-2">
+          Обери країни для паралельного пошуку. Сповіщення прийдуть по всіх, бронювання — тільки по основній країні вище.
+        </p>
+        <div className="grid grid-cols-2 gap-1 max-h-48 overflow-y-auto border rounded p-2">
+          {COUNTRY_NAMES.map(c => (
+            <label key={c} className="flex items-center gap-1.5 text-sm py-0.5">
+              <input type="checkbox"
+                checked={form.searchCountries.includes(c)}
+                onChange={e => {
+                  setForm(f => {
+                    const sc = e.target.checked
+                      ? [...f.searchCountries, c]
+                      : f.searchCountries.filter(x => x !== c)
+                    return { ...f, searchCountries: sc }
+                  })
+                  setSaved(false)
+                }} />
+              {c}
+            </label>
+          ))}
+        </div>
+        {form.searchCountries.length > 0 && (
+          <p className="text-xs text-blue-600 mt-1">
+            Пошук: {form.searchCountries.length} країн(а) + основна
           </p>
         )}
       </div>

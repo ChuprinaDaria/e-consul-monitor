@@ -85,39 +85,52 @@ class SlotMonitor {
     }
 
     // Resolve institution metadata (timeZone, numberWeeks) and missing codes via API
-    if (config.consulate.country) {
-      await this._resolveInstitutionData(config)
+    // Мультикраїнний пошук: основна країна + searchCountries (дедупліковані)
+    const base = config.consulate.country ? [config.consulate.country] : []
+    const extra = config.consulate.searchCountries || []
+    const searchCountries = [...new Set([...base, ...extra])]
+
+    if (searchCountries.length > 0) {
+      await this._resolveInstitutionData(config, searchCountries)
     }
   }
 
-  async _resolveInstitutionData(config) {
+  async _resolveInstitutionData(config, searchCountries) {
     try {
-      this.onLog(`Loading institution data for "${config.consulate.country}"...`)
+      this.onLog(`Loading institution data for ${searchCountries.length} country(s): ${searchCountries.join(', ')}...`)
       const countries = await this.api.getCountries()
-      const country = countries.find(c => c.nameShort === config.consulate.country)
-      if (!country) {
-        this.onLog(`Country "${config.consulate.country}" not found in API`)
-        return
-      }
 
-      const institutions = await this.api.getInstitutions(country.code)
+      const allInstitutionCodes = []
 
-      // Save metadata (timeZone, numberWeeks) per institution
-      for (const inst of institutions) {
-        if (inst.unitId) {
-          this._institutionMeta.set(inst.unitId, {
-            timeZone: inst.timeZone,
-            numberWeeks: inst.numberWeeks,
-          })
+      for (const countryName of searchCountries) {
+        const country = countries.find(c => c.nameShort === countryName)
+        if (!country) {
+          this.onLog(`Country "${countryName}" not found in API — skipping`)
+          continue
         }
-      }
-      this.onLog(`Loaded metadata for ${this._institutionMeta.size} consulates (tz, weeks)`)
 
-      // If no static codes — use resolved ones
+        const institutions = await this.api.getInstitutions(country.code)
+
+        // Save metadata (timeZone, numberWeeks) per institution
+        for (const inst of institutions) {
+          if (inst.unitId) {
+            this._institutionMeta.set(inst.unitId, {
+              timeZone: inst.timeZone,
+              numberWeeks: inst.numberWeeks,
+            })
+            allInstitutionCodes.push(inst.unitId)
+          }
+        }
+        this.onLog(`  ${countryName}: ${institutions.length} consulate(s)`)
+      }
+
+      this.onLog(`Loaded metadata for ${this._institutionMeta.size} consulates total`)
+
+      // If no static codes — use resolved ones from all countries
       const hasStaticCodes = config.consulate.institutionCodes?.length > 0 || config.consulate.institutionCode
       if (!hasStaticCodes) {
-        this._institutionCodes = institutions.map(i => i.unitId).filter(Boolean)
-        this.onLog(`Resolved ${this._institutionCodes.length} consulates: ${institutions.map(i => i.nameUkr).join(', ')}`)
+        this._institutionCodes = allInstitutionCodes
+        this.onLog(`Monitoring ${this._institutionCodes.length} consulates across ${searchCountries.length} country(s)`)
       }
     } catch (err) {
       this.onLog(`Failed to load institution data: ${err.message}`)

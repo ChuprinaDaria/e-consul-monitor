@@ -190,7 +190,9 @@ async function reauth(config, authMethod, attempt = 1) {
     if (ok) {
       sendToRenderer('monitor:log', 'KEP re-auth OK')
       if (telegram) await telegram.sendMessage('🔑 <b>Переавторизація KEP — OK</b>', ECONSUL_LINK)
-      if (monitor) monitor.resumeAfterReauth(authEngine.win?.webContents || null)
+      const newWc = authEngine.win?.webContents || null
+      if (bookingService) bookingService.api.setWebContents(newWc)
+      if (monitor) monitor.resumeAfterReauth(newWc)
     } else {
       sendToRenderer('monitor:log', `KEP re-auth failed (attempt ${attempt})`)
       if (attempt < REAUTH_MAX_RETRIES) {
@@ -243,13 +245,16 @@ async function reauth(config, authMethod, attempt = 1) {
   sendToRenderer('monitor:log', `Re-auth OK — token: ${token ? 'yes' : 'no'}`)
 
   // Resume monitoring with new webContents
+  const newWc = authEngine.win?.webContents || null
+  if (bookingService) bookingService.api.setWebContents(newWc)
   if (monitor) {
-    monitor.resumeAfterReauth(authEngine.win?.webContents || null)
+    monitor.resumeAfterReauth(newWc)
   }
 }
 
 // --- monitor ---
 let authEngine = null
+let bookingService = null
 
 ipcMain.handle('monitor:start', async () => {
   const config = configStore.get()
@@ -328,7 +333,7 @@ ipcMain.handle('monitor:start', async () => {
   // Step 2: Start monitoring — API calls go through the auth browser window
   // This bypasses Cloudflare WAF (real browser TLS fingerprint)
   const wc = authEngine?.win?.webContents || null
-  const bookingService = new BookingService({
+  bookingService = new BookingService({
     api: new (require('./src/lib/eQueueApi').EQueueApi)(wc),
     onLog: (msg) => sendToRenderer('monitor:log', msg),
   })
@@ -393,6 +398,7 @@ ipcMain.handle('monitor:stop', () => {
     monitor.stop()
     monitor = null
   }
+  bookingService = null
   if (authEngine) {
     authEngine.close()
     authEngine = null
